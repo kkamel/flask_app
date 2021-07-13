@@ -10,124 +10,105 @@ from markupsafe import escape
 from flask import Flask, current_app, g, render_template
 from flask_restful import Resource, Api, reqparse
 from flask_sqlalchemy import SQLAlchemy
-from .models import db, Student
+from .models import db, Player
 
 
 app = Flask(__name__)
 api = Api(app)
 
-#DATABASE = '/path/to/database.db'
-data_file = "lie_sentiment_review.csv"
+data_file = "People.csv"
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///'
 # Intialize DB
 #db = SQLAlchemy(app)
 
 # Data files
 fields = []
-rows = []
+row_table = {}
+players = {}
 
+cache = {}
+CACHE_SIZE = 1000
 
 @app.before_first_request
 def create_tables():
-    #read_csv(data_file)
-    read_verylarge_csv(data_file)
+    #read_verylarge_csv(data_file)
     db.init_app(app)
     db.create_all()
+    read_csv(data_file)
 
-
-'''
-@app.route("/<name>")
-def hello(name):
-    return f"Hello, {escape(name)}!"
-'''
 parser = reqparse.RequestParser()
 
 @app.route('/')
 def index():
-    return 'Index Page'
+    return 'Players API'
 
-@app.route('/students', methods=["GET"])
-def list_students():
-    "in list_students"
-    result = Student.query.order_by(Student.name).all()
-    students = {}
-    for student in result:
-        students[student.id] = (student.name, student.age, student.spec)
+@app.route('/players', methods=["GET"])
+def list_players():
+    players = {}
+    not_cached = []
+
+    if len(cache) == 0:
+        result = Player.query.order_by(Player.playerID).all()
+        print("loading into cache", len(result))
+        for player in result:
+            #print(type(player))
+            if len(cache) < CACHE_SIZE:
+                cache[player.playerID] = str(player)
+            else:
+                not_cached = player.id
+            players[player.playerID] = str(player)
+            
+        if result:
+            print("success", len(result))
+        else:
+            print("failure")
+
+    else:
+
+        #result = Player.query.order_by(Player.playerID).all()
+        
+
+        for player_id, attrs in cache.items():
+            players[player_id] = str(attrs)
+
+        for id, player in not_cached.items():
+            player = Player.query.get(id)
+            players[player_id] = str(player)
+
+        print ("retruning from cache")
     
-    return str(result), 200
+    return players, 200
    
-
-@app.route('/students', methods=["POST"])
-def add_new_student():
-    # Request args need to be parsed
-    parser.add_argument("name")
-    parser.add_argument("age")
-    parser.add_argument("spec")
-    args = parser.parse_args()
-    #----Parse request args------
-    new_name = ""
-    new_age = ""
-    new_spec = ""
-    if "name" in args:
-        new_name = args["name"]
-    if "age" in args:
-        new_age = args["age"]
-    if "spec" in args:
-        new_spec = args["spec"]
-    #-----Create new student object---------
-    result = Student.query.filter_by(name=new_name).first()
-    # Check is student already exists in table
-    if result:
-        return "Student already exists!", 200
-    # If student does not exist, create a new student object
-    new_student = Student(name=new_name, age=new_age, spec=new_spec)
-    try:
-        #-----Add new student object---------
-        db.session.add(new_student)
-        #-----Commit new student object---------
-        db.session.commit()
-        result = Student.query.filter_by(name=new_name).first()
-        return str(result), 201
-    except:
-        return "Could not add new student to DB", 500
-
-@app.route('/students/<student_id>', methods=["GET"])
-def retrieve_student(student_id):
-    result = Student.query.get(student_id)
+@app.route('/players/<player_id>', methods=["GET"])
+def retrieve_player(player_id):
+    result = Player.query.filter_by(playerID=player_id).first()
     print(result)
     if not result:
-        return "Student Not found", 404    
+        return "Player Not found", 404    
     return str(result), 200
 
 
-@app.route('/students/<student_id>', methods=["PUT"])
-def update_student(student_id):
-    # Retrieve student tuple from db
-    student = Student.query.get(student_id)
-    if not student:
-        return "Record not found", 404
-    parser.add_argument("name")
-    parser.add_argument("age")
-    parser.add_argument("spec")
-    args = parser.parse_args()  
-    # Modify student tuple
-    student.name = args["name"] if args["name"] is not None else student["name"]
-    student.age = args["age"] if args["age"] is not None else student["age"]
-    student.spec = args["spec"] if args["spec"] is not None else student["spec"]
-    # Commit modified tuple to db
+@app.route('/players/<player_id>/weight', methods=["PUT"])
+def increment_weight(player_id):
+    player = Player.query.filter_by(playerID=player_id).first()
+    if not player:
+        return "Player Not found", 404
+    print("found player")
+    player.weight += 1
+    print("incremented weight")
     db.session.commit()
-    return str(student), 200
+    print("commited to DB")
+    return str(player)
 
 
-@app.route('/students/<student_id>', methods=["DELETE"])
-def remove_student(student_id):
-    # Retrieve student tuple from db
-    student = Student.query.get(student_id)
-    if not student:
-        return "Record not found", 404
-    db.session.delete(student)
+@app.route('/players/<player_id>/height', methods=["PUT"])
+def increment_height(player_id):
+    player = Player.query.filter_by(playerID=player_id).first()
+    if not player:
+        return "Player Not found", 404
+    player.height += 1
     db.session.commit()
-    return '', 204
+    return str(player)
 
 
 def read_csv(filepath):
@@ -142,7 +123,11 @@ def read_csv(filepath):
       
         # extract each line
         for row in csvreader:
-            rows.append(row)
+
+            populate_DB(row)
+            #print (row)
+
+            players[row[0]] = row
       
         # get total number of rows
         print("Total no. of rows: %d"%(csvreader.line_num))
@@ -159,6 +144,23 @@ def read_verylarge_csv(filepath):
     dask_df = dd.read_csv(filepath)
     end = time.time()
     print("Read csv with dask: ",(end-start),"sec")
+
+
+def populate_DB(row):
+    if row[16] != '':
+        row[16] = int(row[16])
+    if row[17] != '':
+        row[17] = int(row[17])
+
+    player = Player(playerID=row[0], birthYear=row[1], birthMonth=row[2], birthDay=row[3], \
+        birthCountry=row[4], birthState=row[5], birthCity=row[6], deathYear=row[7],\
+        deathMonth=row[8], deathDay=row[9], deathCountry=row[10], deathState=row[11],\
+        deathCity=row[12], nameFirst=row[13], nameLast=row[14], nameGiven=row[15], \
+        weight=row[16], height=row[17], bats=row[18], throws=row[19], debut=row[20],\
+        finalGame=row[21], retroID=row[22], bbrefID=row[23])
+    
+    db.session.add(player)
+    db.session.commit()
 
 '''
 api.add_resource(StudentsList, '/students/')
